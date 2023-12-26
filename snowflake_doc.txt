@@ -1,0 +1,176 @@
+query acceleration service -- you can use the SYSTEM$ESTIMATE_QUERY_ACCELERATION( '<query_id>' ) function 
+or 
+query the QUERY_ACCELERATION_ELIGIBLE View --> SELECT query_id, eligible_query_acceleration_time
+  FROM SNOWFLAKE.ACCOUNT_USAGE.QUERY_ACCELERATION_ELIGIBLE
+  ORDER BY eligible_query_acceleration_time DESC;
+------------------
+
+Enable the query acceleration service by specifying ENABLE_QUERY_ACCELERATION = TRUE 
+
+------------------
+types of snowflake warehouses --STANDARD and SNOWPARK-OPTIMIZED 
+-----
+Standard
+Standard warehouses can be used for most workloads including Snowpark
+Snowpark-optimized
+Snowpark-optimized warehouses offer a larger memory and cache. 
+They are often used for memory intensive operations
+--------------
+Micro-partitions :
+All data in Snowflake tables is automatically divided into micro-partitions, which are contiguous units of storage.
+Each micro-partition contains between 50 MB and 500 MB of uncompressed data
+Snowflake stores metadata about all rows stored in a micro-partition, including:
+The range of values for each of the columns in the micro-partition.
+The number of distinct values.
+Additional properties used for both optimization and efficient query processing.
+Columns are stored independently within micro-partitions, often referred to as columnar storage. 
+with this, snowflake only scans the required partitions in the table when queried the large table, no more scanning of whole dataset like legacy systems
+--------------
+Data Clustering :
+data stored in tables is sorted/ordered along natural dimensions (e.g. date and/or geographic regions)
+as data is inserted/loaded into a table, clustering metadata is collected and recorded for each micro-partition created during the process
+Snowflake then leverages this clustering information to avoid unnecessary scanning of micro-partitions during querying, significantly accelerating the performance of queries
+-------------
+In short, micro-partitions are the fundamental storage units of Snowflake, and clustering is a feature that 
+organizes data within micro-partitions based on one or more columns
+--------------
+Clustering Keys :
+A table with a clustering key defined is considered to be clustered.
+Clustering keys are not intended for all tables due to the costs of initially clustering the data and maintaining the clustering. 
+Clustering is optimal when either:
+You require the fastest possible response times, regardless of cost.
+Your improved query performance offsets the credits required to cluster and maintain the table.
+
+A clustering key is a subset of columns in a table (or expressions on a table) that are explicitly designated to co-locate the data in the table in the same micro-partitions.
+CREATE OR REPLACE TABLE t1 (c1 DATE, c2 STRING, c3 NUMBER) CLUSTER BY (c1, c2);
+
+Automatic Clustering is the Snowflake service that seamlessly and continually manages all reclustering, as needed, of clustered tables.
+You can suspend and resume Automatic Clustering for a clustered table at any time using 
+ALTER TABLE t1 SUSPEND / RESUME RECLUSTER
+------------
+Temporary Tables:
+Temporary tables only exist within the session in which they were created and persist only for the remainder of the session. 
+As such, they are not visible to other users or sessions.
+
+you can create temporary and non-temporary tables with the same name within the same schema
+This can lead to potential conflicts and unexpected behavior, particularly when performing DDL on both temporary and non-temporary tables
+CREATE TEMPORARY TABLE mytemptable (id NUMBER, creation_date DATE);
+---------------
+Transient Tables :
+Transient tables are similar to permanent tables with the key difference that they do not have a Fail-safe period
+When you create a transient table as a clone of a permanent table, 
+Snowflake creates a zero-copy clone. This means when the transient table is created, 
+it utilizes no data storage because it shares all of the existing micro-partitions of the original permanent table
+. When rows are added, deleted, or updated in the clone, it results in new micro-partitions that belong 
+exclusively to the clone (in this case, the transient table).
+Snowflake also supports creating transient databases and schemas
+CREATE TRANSIENT TABLE mytranstable (id NUMBER, creation_date DATE);
+The Time Travel retention period for a table can be specified when the table is created or any time afterwards. 
+Within the retention period, all Time Travel operations can be performed on data in the table (e.g. queries) and the table itself
+-----------------
+External Tables :
+External tables can access data stored in any format that the COPY INTO <table> command supports
+You cannot perform data manipulation language (DML) operations on them
+Delta Lake is a table format on your data lake that supports ACID (atomicity, consistency, isolation, durability) transactions among other features
+TABLE_FORMAT = DELTA
+we can refresh metadata of the table -> ALTER EXTERNAL TABLE t1 REFRESH / SET AUTO REFRESH when creating the EXTERNAL TABLE 
+to remove files from external table after n days --> call remove_old_files('exttable', 90); , n = 90
+---------------
+Iceberg tables:
+snowflake iceberg tables can read the data from any external cloud locations 
+Iceberg tables for Snowflake combine the performance and query semantics of regular Snowflake tables with external cloud storage that you manage.
+They are ideal for existing data lakes that you cannot, or choose not to, store in Snowflake.
+Snowflake supports Iceberg tables that use the Apache Parquet file format.
+--------------------
+Secure Views :
+Views should be defined as secure when they are specifically designated for data privacy 
+(i.e. to limit access to sensitive data that should not be exposed to all users of the underlying table(s)).
+-------------------
+Materialized view : 
+A materialized view is a pre-computed data set derived from a query specification (the SELECT in the view definition) and stored for later use. 
+Because the data is pre-computed,  querying a materialized view is faster than executing a query against the base table of the view. 
+-------------------
+Its recommend dedicating separate warehouses for loading and querying operations to optimize performance for each.
+----------------
+Snowflake Stages are locations where data files are stored (staged) for loading and unloading data. 
+They are used to move data from one place to another, 
+and the locations for the stages could be internal or external to the Snowflake environment
+---------------
+STORAGE INTEGRATION 
+Is a storage integration is a Snowflake object that stores a
+generated identity and access management (IAM) user for your S3 cloud storage
+-----------------------------
+Snowflake supports loading semi-structured data directly into columns of type VARIANT
+-------------------------
+Review the data loading activity that has occurred over the last 365 days for all tables in your account by using the Copy History page in Snowsight
+-------
+Listing files in user stage 
+LIST @%user
+Listing files in table stage 
+LIST @~table
+Listing files in internal stage 
+LIST @stg_name
+------------------------
+Snowflake creates a single IAM user that is referenced by all S3 storage integrations in your Snowflake account.
+An AWS administrator in your organization grants permissions to the IAM user to access the bucket referenced in the stage definition.
+
+--------------------
+snowpipe
+Load data files in s3 into snowflake tables using REST ENDPOINT(CALLING an API)
+Load data files in s3 into snowflake tables using AWS LAMBDA(CALLING an API)
+Also, we can load data into snowflake tables using snowpipe by SNS, SQS as well, configuring as events in s3 bucket
+--------------------
+Query staging(internal/eXTERNAL)
+create a externtal intergration and stage with that intergration and we can query using that stage directly 
+-------------------
+we can even query metadata & actual data of staging files like below 
+CREATE OR REPLACE file format my_csv TYPE = 'csv'
+SELECT t.$1,t.$2 from @S3_STG_CPR (file_format => my_csv ) t;
+SELECT METADATA$FILENAME, METADATA$FILE_ROW_NUMBER, METADATA$FILE_CONTENT_KEY, t.$1,t.$2 from @S3_STG_CPR t
+-----------------------
+If table schema is evolving, we should have enable_schema_evolution as True on the table so, 
+if any new column gets added, It will 
+ALTER TABLE t1 SET ENABLE_SCHEMA_EVOLUTION = TRUE;
+-----------------
+Dynamic Table :
+Dynamic tables are the building blocks of declarative data transformation pipelines
+Instead of creating a separate target table and writing code to transform and update the data in that table, 
+you can define the target table as a dynamic table,
+and you can specify the SQL statement that performs the transformation. 
+Target lag is specified in one of two ways:
+TARGET_LAG = 10minutes -- for every 10mins
+TARGET_LAG = DOWNSTREAM -- when ever the downstream is updated then dynamic talble attempt's for refresh
+------------------
+Stream:
+stream itself does not contain any table data.
+A stream only stores an offset for the source object and returns CDC records by leveraging the versioning history for the source object. 
+When the first stream for a table is created, several hidden columns are added to the source table and begin storing change tracking metadata. 
+The CDC records returned when querying a stream rely on a combination of the offset stored in the stream and the change tracking metadata stored in the table
+-----------------------
+task:
+Tasks can be combined with table streams for continuous ELT workflows to process recently changed table rows. 
+Streams ensure exactly once semantics for new or changed data in a table.
+
+
+
+
+
+
+
+
+ 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
